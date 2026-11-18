@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="es" ng-app="cfdiOrganizerApp">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organizador de CFDIs</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body ng-controller="mainCtrl">
+
+  <header class="header">
+    <div class="marca">
+      <div class="marca-logo">🧾</div>
+      <div>
+        <h1>Organizador de CFDIs</h1>
+        <p class="subtitulo">Ordena tus facturas por mes y llena tu Excel de Ingresos</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab" ng-class="{activo: pestana === 'organizar'}" ng-click="pestana = 'organizar'">
+        📂 Organizar CFDIs
+      </button>
+      <button class="tab" ng-class="{activo: pestana === 'pagosMultiples'}" ng-click="pestana = 'pagosMultiples'">
+        🔎 Pagos entre meses
+      </button>
+      <button class="tab" ng-class="{activo: pestana === 'ingresosExcel'}" ng-click="pestana = 'ingresosExcel'">
+        📊 Llenar Excel de Ingresos
+      </button>
+    </nav>
+  </header>
+
+  <!-- Cliente y régimen fiscal (compartido por Organizar y Llenar Excel de Ingresos) -->
+  <main class="contenedor contenedor-cliente" ng-show="pestana === 'organizar' || pestana === 'ingresosExcel'">
+    <section class="tarjeta">
+      <h2><span class="paso">👤</span> Cliente y régimen fiscal</h2>
+      <p class="ayuda">
+        Cada cliente trabaja con un régimen fiscal. En <strong>Egresos</strong>, los CFDIs cuyo régimen
+        receptor sea distinto al del cliente se guardan en <code>Egresos/Otro regimen (número - nombre)</code>.
+        En <strong>Llenar Excel de Ingresos</strong>, solo se usan los Emitidos cuyo régimen emisor sea el del cliente.
+      </p>
+
+      <div class="fila" ng-if="clientes.length && !modoCliente">
+        <label for="selCliente"><strong>Cliente:</strong></label>
+        <select id="selCliente" class="campo" ng-model="sel.clienteId" ng-change="seleccionarCliente()"
+                ng-options="c.id as c.nombre for c in clientes">
+          <option value="">— Selecciona un cliente —</option>
+        </select>
+        <button class="btn btn-secundario" ng-click="nuevoCliente()">＋ Nuevo cliente</button>
+        <button class="btn btn-secundario" ng-click="editarCliente()" ng-if="clienteActual()">✎ Cambiar régimen / nombre</button>
+        <button class="btn btn-cancelar" ng-click="eliminarCliente()" ng-if="clienteActual()">Eliminar</button>
+      </div>
+
+      <p class="ok" ng-if="clienteActual() && !modoCliente">
+        Régimen del cliente: <strong>{{ nombreRegimen(clienteActual().regimenCodigo) }}</strong>
+      </p>
+      <p class="pista" ng-if="clientes.length && !clienteActual() && !modoCliente">
+        Selecciona un cliente para poder buscar Egresos.
+      </p>
+
+      <div class="preview" ng-if="modoCliente">
+        <h3>{{ modoCliente === 'nuevo' ? 'Nuevo cliente' : 'Editar cliente' }}</h3>
+        <div class="fila">
+          <label for="nomCliente">Nombre:</label>
+          <input id="nomCliente" class="campo" type="text" ng-model="formCliente.nombre" placeholder="Nombre del cliente">
+        </div>
+        <div class="fila">
+          <label for="regCliente">Régimen fiscal:</label>
+          <select id="regCliente" class="campo" ng-model="formCliente.regimenCodigo"
+                  ng-options="r.codigo as (r.codigo + ' - ' + r.nombre) for r in regimenes">
+            <option value="">— Selecciona el régimen —</option>
+          </select>
+          <button class="btn btn-secundario" ng-click="formRegimen.visible = !formRegimen.visible">
+            ＋ Régimen que no está en la lista
+          </button>
+        </div>
+        <div class="fila" ng-if="formRegimen.visible">
+          <input class="campo campo-corto" type="text" ng-model="formRegimen.codigo" placeholder="Número (ej. 512)" maxlength="4">
+          <input class="campo" type="text" ng-model="formRegimen.nombre" placeholder="Nombre (ej. Transporte)">
+          <button class="btn btn-primario" ng-click="guardarRegimen()">Guardar régimen</button>
+        </div>
+        <div class="fila">
+          <button class="btn btn-confirmar" ng-click="guardarCliente()"
+                  ng-disabled="!formCliente.nombre || !formCliente.regimenCodigo">✔ Guardar</button>
+          <button class="btn btn-cancelar" ng-click="cancelarFormCliente()" ng-if="clientes.length">Cancelar</button>
+        </div>
+      </div>
+
+      <p class="error" ng-if="mensajeErrorCliente">{{ mensajeErrorCliente }}</p>
+    </section>
+  </main>
+
+  <main class="contenedor" ng-show="pestana === 'organizar'">
+
+    <!-- Paso 1: Selección de carpetas y carga de Excel -->
+    <section class="tarjeta">
+      <h2><span class="paso">1</span> Selecciona las carpetas (una por cada mes)</h2>
+      <p class="ayuda">
+        Puedes seleccionar varias carpetas a la vez. Se procesan de una en una: primero se
+        organiza por completo la carpeta actual y, cuando termines, avanzas a la siguiente.
+      </p>
+
+      <div class="fila">
+        <button class="btn btn-primario" ng-click="seleccionarCarpetasOrganizar()">📁 Seleccionar carpetas</button>
+        <button class="btn btn-secundario" ng-click="limpiarCarpetasOrganizar()" ng-if="carpetasOrganizar.length">
+          Limpiar selección
+        </button>
+      </div>
+
+      <ul class="lista-carpetas" ng-if="carpetasOrganizar.length">
+        <li ng-repeat="c in carpetasOrganizar track by $index" ng-class="{activa: $index === indiceCarpetaActual}">
+          {{ $index === indiceCarpetaActual ? '▶ ' : '' }}{{ c }}
+        </li>
+      </ul>
+
+      <div class="navegador-carpetas" ng-if="carpetasOrganizar.length > 1">
+        <span class="contador">Carpeta {{ indiceCarpetaActual + 1 }} de {{ carpetasOrganizar.length }}</span>
+        <button class="btn btn-cancelar" ng-click="irCarpetaAnterior()" ng-disabled="indiceCarpetaActual === 0">
+          ◀ Carpeta anterior
+        </button>
+        <button class="btn btn-confirmar" ng-click="irCarpetaSiguiente()" ng-disabled="indiceCarpetaActual === carpetasOrganizar.length - 1">
+          Siguiente carpeta ▶
+        </button>
+      </div>
+
+      <div class="fila" ng-if="carpeta">
+        <button class="btn btn-primario" ng-click="cargarExcels()" ng-disabled="cargandoExcels">
+          <span class="spinner" ng-if="cargandoExcels"></span>{{ cargandoExcels ? 'Cargando...' : 'Cargar Excel (Emitidos y Recibidos)' }}
+        </button>
+        <span class="ok" ng-if="excelsCargados">
+          ✔ Emitidos: {{ infoExcels.emitidos.archivo }} ({{ infoExcels.emitidos.filas }} filas) ·
+          Recibidos: {{ infoExcels.recibidos.archivo }} ({{ infoExcels.recibidos.filas }} filas)
+        </span>
+      </div>
+
+      <p class="error" ng-if="mensajeError">{{ mensajeError }}</p>
+    </section>
+
+    <!-- Paso 2: Procesos -->
+    <section class="tarjeta" ng-if="excelsCargados">
+      <h2><span class="paso">2</span> Organiza los CFDIs</h2>
+      <p class="ayuda">
+        Orden recomendado: primero <strong>Pagos</strong>, después <strong>Egresos</strong>.
+        <strong>Ingresos</strong> es independiente y puede ejecutarse en cualquier momento.
+      </p>
+
+      <div class="grupo-proceso" ng-repeat="proceso in procesos">
+        <div class="tarjeta-proceso-titulo">
+          <span class="icono-proceso">{{ proceso.id === 'pagos' ? '💳' : (proceso.id === 'egresos' ? '📤' : '📥') }}</span>
+          {{ proceso.nombre }}
+        </div>
+        <div class="fila">
+          <button class="btn btn-primario"
+                  ng-click="previsualizar(proceso.id)"
+                  ng-disabled="proceso.deshabilitado || proceso.cargando || egresosBloqueado(proceso)">
+            <span class="spinner" ng-if="proceso.cargando"></span>{{ proceso.cargando ? 'Calculando...' : 'Buscar ' + proceso.nombre }}
+          </button>
+          <span class="pista" ng-if="proceso.deshabilitado">{{ proceso.motivoDeshabilitado }}</span>
+          <span class="pista" ng-if="!proceso.deshabilitado && egresosBloqueado(proceso)">
+            Selecciona un cliente (con su régimen) en la tarjeta de arriba.
+          </span>
+          <span class="ok" ng-if="proceso.confirmado && !proceso.resumen">Proceso confirmado anteriormente.</span>
+        </div>
+
+        <!-- Vista previa -->
+        <div class="preview" ng-if="proceso.preview">
+          <h3>Vista previa — {{ proceso.nombre }}</h3>
+          <div class="estadisticas">
+            <div class="stat" ng-repeat="(clave, valor) in proceso.preview.conteos">
+              <div class="valor">{{ valor }}</div>
+              <div class="etiqueta">{{ clave }}</div>
+            </div>
+          </div>
+          <div ng-if="proceso.id === 'pagos' && (proceso.preview.detalle.conComplemento.length || proceso.preview.detalle.sinComplemento.length)">
+            <p class="ayuda">
+              El UUID del pago sale de la columna <strong>UUID</strong> del Excel de Recibidos (Tipo = P);
+              el UUID del complemento sale del <code>IdDocumento</code> dentro del XML del pago.
+            </p>
+            <ul class="lista-detalle" ng-if="proceso.preview.detalle.conComplemento.length">
+              <li ng-repeat="p in proceso.preview.detalle.conComplemento">
+                ✔ <span class="uuid-etiqueta">Pago</span> <code>{{ p.uuid }}</code>
+                <span class="pista">→ carpeta "{{ p.carpetaDestino }}"</span>
+                <p class="error" ng-if="p.complementos.length > 1">⚠ Liquida {{ p.complementos.length }} complementos: todos van a esta carpeta (el nombre usa el primero).</p>
+                <ul>
+                  <li ng-repeat="c in p.complementos"><span class="uuid-etiqueta">Complemento</span> <code>{{ c.uuid }}</code> <span class="pista">({{ c.archivo }})</span></li>
+                </ul>
+              </li>
+            </ul>
+            <ul class="lista-detalle" ng-if="proceso.preview.detalle.sinComplemento.length">
+              <li ng-repeat="p in proceso.preview.detalle.sinComplemento" class="pista">
+                ✖ <span class="uuid-etiqueta">Pago</span> <code>{{ p.uuid }}</code> sin complemento en esta carpeta
+                <span ng-if="p.idsBuscados.length">— buscó: <code ng-repeat="id in p.idsBuscados">{{ id }}{{ $last ? '' : ', ' }}</code></span>
+              </li>
+            </ul>
+          </div>
+          <div ng-if="proceso.id === 'egresos' && proceso.preview.detalle.otroRegimen.length">
+            <p class="ayuda">
+              Cliente: <strong>{{ proceso.preview.detalle.cliente.nombre }}</strong>
+              (régimen {{ nombreRegimen(proceso.preview.detalle.cliente.regimenCodigo) }}).
+              Carpetas que se crearán dentro de Egresos:
+            </p>
+            <ul class="lista-detalle">
+              <li ng-repeat="g in proceso.preview.detalle.otroRegimen">
+                <code>{{ g.carpeta }}</code> — {{ g.cantidad }} archivo(s)
+              </li>
+            </ul>
+          </div>
+          <p class="pista" ng-if="proceso.id === 'egresos' && proceso.preview.conteos['Sin régimen en el XML (CFDI 3.3): se quedan en Egresos'] > 0">
+            Hay XML sin régimen receptor (CFDI 3.3): no se puede saber si son de otro régimen, así que se quedan en Egresos.
+          </p>
+          <p class="ayuda">Nada se ha movido todavía. Revisa las cantidades y confirma.</p>
+          <div class="fila">
+            <button class="btn btn-confirmar" ng-click="confirmar(proceso.id)" ng-disabled="proceso.confirmando">
+              <span class="spinner" ng-if="proceso.confirmando"></span>{{ proceso.confirmando ? 'Moviendo archivos...' : '✔ Confirmar y mover archivos' }}
+            </button>
+            <button class="btn btn-cancelar" ng-click="cancelarPreview(proceso.id)" ng-disabled="proceso.confirmando">
+              Cancelar
+            </button>
+          </div>
+        </div>
+
+        <!-- Resumen final -->
+        <div class="resumen" ng-if="proceso.resumen">
+          <h3>✔ Resumen — {{ proceso.nombre }}</h3>
+          <div class="estadisticas">
+            <div class="stat" ng-repeat="(clave, valor) in proceso.resumen" ng-if="clave !== 'errores'">
+              <div class="valor">{{ valor }}</div>
+              <div class="etiqueta">{{ clave }}</div>
+            </div>
+          </div>
+          <p class="error" ng-if="proceso.resumen.errores && proceso.resumen.errores.length">
+            ⚠ {{ proceso.resumen.errores.length }} archivo(s) con error al moverse. Revisa la consola del programa.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <main class="contenedor" ng-show="pestana === 'pagosMultiples'">
+
+    <section class="tarjeta">
+      <h2><span class="paso">1</span> Buscar pagos de diferentes meses</h2>
+      <p class="ayuda">
+        Selecciona varias carpetas de meses distintos (las carpetas principales que ya organizaste
+        antes, cada una con su subcarpeta <code>Pagos</code>). El sistema buscará, entre todas
+        ellas, el complemento de los pagos marcados como <code>NoEncontradoPago</code>.
+      </p>
+
+      <div class="fila">
+        <button class="btn btn-primario" ng-click="seleccionarCarpetasMultiples()">
+          📁 Seleccionar carpetas
+        </button>
+        <button class="btn btn-secundario" ng-click="limpiarCarpetasMultiples()" ng-if="carpetasMultiples.length">
+          Limpiar selección
+        </button>
+      </div>
+
+      <ul class="lista-carpetas" ng-if="carpetasMultiples.length">
+        <li ng-repeat="c in carpetasMultiples track by $index">{{ c }}</li>
+      </ul>
+
+      <div class="fila" ng-if="carpetasMultiples.length">
+        <button class="btn btn-primario"
+                ng-click="buscarPagosMultiplesCarpetas()"
+                ng-disabled="carpetasMultiples.length < 2 || cargandoPagosMultiples">
+          <span class="spinner" ng-if="cargandoPagosMultiples"></span>{{ cargandoPagosMultiples ? 'Buscando...' : '🔎 Buscar complementos' }}
+        </button>
+        <span class="pista" ng-if="carpetasMultiples.length === 1">Selecciona al menos 2 carpetas.</span>
+      </div>
+
+      <p class="error" ng-if="mensajeErrorMultiples">{{ mensajeErrorMultiples }}</p>
+    </section>
+
+    <!-- Vista previa -->
+    <section class="tarjeta" ng-if="previewPagosMultiples">
+      <h2><span class="paso">2</span> Vista previa</h2>
+      <div class="estadisticas">
+        <div class="stat"><div class="valor">{{ previewPagosMultiples.totalPendientes }}</div><div class="etiqueta">Pagos pendientes</div></div>
+        <div class="stat"><div class="valor">{{ previewPagosMultiples.totalEncontrados }}</div><div class="etiqueta">Complemento encontrado</div></div>
+        <div class="stat malo"><div class="valor">{{ previewPagosMultiples.totalSiguenSinEncontrarse }}</div><div class="etiqueta">Siguen sin encontrarse</div></div>
+      </div>
+
+      <div class="tarjeta-carpeta" ng-repeat="grupo in previewPagosMultiples.porCarpeta">
+        <h3>{{ grupo.carpeta }}</h3>
+        <p class="ayuda">
+          Pendientes en esta carpeta: {{ grupo.totalPendientes }} ·
+          Se encontrará su complemento: {{ grupo.encontrados.length }} ·
+          Seguirán sin encontrarse: {{ grupo.siguenSinEncontrarse.length }}
+        </p>
+
+        <ul class="lista-detalle" ng-if="grupo.encontrados.length">
+          <li ng-repeat="item in grupo.encontrados">
+            ✔ <strong>Pago</strong> (mes: {{ item.mesPago }})
+            <div class="uuid-linea"><span class="uuid-etiqueta">UUID del pago</span> <code>{{ item.uuid }}</code>
+              <span class="pista">· tomado del nombre del archivo <code>{{ item.archivoPago }}</code></span></div>
+            <div class="pista">
+              Se creará la carpeta <strong>"{{ item.nombreSubcarpeta }}"</strong> en <span class="ruta">{{ item.seCrearaDentroDe }}</span>
+              (mes del complemento: <strong>{{ item.mesDestino }}</strong>
+              <span ng-if="item.mesDestino !== item.mesPago"> — el pago se mueve de {{ item.mesPago }} a {{ item.mesDestino }}</span>).
+            </div>
+            <p class="error" ng-if="item.variosComplementos">
+              ⚠ Este pago liquida {{ item.complementosEncontradosEn.length }} complementos: todos se mueven a la misma carpeta (la del primero) y el nombre de la carpeta usa el primero.
+            </p>
+            <ul>
+              <li ng-repeat="comp in item.complementosEncontradosEn">
+                <span class="uuid-etiqueta">UUID del complemento</span> <code>{{ comp.idDocumento }}</code>
+                <span class="pista">· tomado del <code>IdDocumento</code> dentro del XML del pago</span><br>
+                <span class="pista">Archivo: {{ comp.archivo }} · está en el mes <strong>{{ comp.mes }}</strong></span>
+              </li>
+            </ul>
+          </li>
+        </ul>
+
+        <ul class="lista-detalle" ng-if="grupo.siguenSinEncontrarse.length">
+          <li ng-repeat="item in grupo.siguenSinEncontrarse" class="pista">
+            ✖ Pago <code>{{ item.uuid }}</code> — no se encontró su complemento en las carpetas seleccionadas.
+            <span ng-if="item.idsBuscados.length">UUID(s) de complemento buscados (IdDocumento del pago):
+              <code ng-repeat="id in item.idsBuscados">{{ id }}{{ $last ? '' : ', ' }}</code></span>
+            <span ng-if="!item.idsBuscados.length">El XML del pago no trae IdDocumento.</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="fila">
+        <button class="btn btn-confirmar" ng-click="confirmarPagosMultiplesCarpetas()" ng-disabled="confirmandoPagosMultiples">
+          <span class="spinner" ng-if="confirmandoPagosMultiples"></span>{{ confirmandoPagosMultiples ? 'Moviendo archivos...' : '✔ Confirmar y mover archivos' }}
+        </button>
+        <button class="btn btn-cancelar" ng-click="previewPagosMultiples = null" ng-disabled="confirmandoPagosMultiples">
+          Cancelar
+        </button>
+      </div>
+    </section>
+
+    <!-- Resumen final -->
+    <section class="tarjeta" ng-if="resumenPagosMultiples">
+      <h2>✔ Resumen</h2>
+      <div class="estadisticas">
+        <div class="stat"><div class="valor">{{ resumenPagosMultiples.totalResueltos }}</div><div class="etiqueta">Resueltos</div></div>
+        <div class="stat malo"><div class="valor">{{ resumenPagosMultiples.totalConError }}</div><div class="etiqueta">Con error</div></div>
+      </div>
+      <ul>
+        <li ng-repeat="grupo in resumenPagosMultiples.porCarpeta">
+          {{ grupo.carpeta }}: {{ grupo.resueltos }} resuelto(s)
+          <span ng-if="grupo.errores.length" class="error">— {{ grupo.errores.length }} con error</span>
+        </li>
+      </ul>
+    </section>
+
+  </main>
+
+  <main class="contenedor" ng-show="pestana === 'ingresosExcel'">
+
+    <section class="tarjeta">
+      <h2>Llenar Excel de Ingresos</h2>
+      <p class="ayuda">
+        Toma los Excel de "Emitidos" de cada mes (filtrando Estado VIGENTE y el régimen emisor del cliente seleccionado arriba) y
+        llena la pestaña correspondiente del Excel de Ingresos (el de las 12 pestañas, una por
+        mes). El archivo original NO se modifica: se genera una copia nueva en la ubicación que tú
+        elijas.
+      </p>
+
+      <h3><span class="paso">1</span> Excel(es) de Emitidos</h3>
+      <p class="ayuda">
+        Nombra cada archivo empezando con el mes (ENERO, Febrero, marzoVentas, etc.) para que el
+        programa sepa a qué pestaña corresponde.
+      </p>
+      <div class="fila">
+        <button class="btn btn-primario" ng-click="seleccionarArchivosEmitidosIngresos()">
+          📄 Seleccionar Excel(es) de Emitidos
+        </button>
+        <button class="btn btn-secundario" ng-click="limpiarArchivosEmitidosIngresos()" ng-if="archivosEmitidosIngresos.length">
+          Limpiar selección
+        </button>
+      </div>
+      <ul class="lista-carpetas archivos" ng-if="archivosEmitidosIngresos.length">
+        <li ng-repeat="a in archivosEmitidosIngresos track by $index">{{ a }}</li>
+      </ul>
+
+      <h3><span class="paso">2</span> Excel de Ingresos (12 pestañas)</h3>
+      <div class="fila">
+        <button class="btn btn-primario" ng-click="seleccionarArchivoMaestroIngresos()">
+          📊 Seleccionar Excel de Ingresos
+        </button>
+        <span class="archivo-elegido" ng-if="archivoMaestroIngresos">✔ <span class="ruta">{{ archivoMaestroIngresos }}</span></span>
+      </div>
+
+      <h3><span class="paso">3</span> Año que estás haciendo</h3>
+      <p class="ayuda">
+        Se te pide el año para <strong>renombrar las pestañas</strong> del Excel de Ingresos:
+        con 2026 quedarán como <code>ENERO 2026</code>, <code>FEBRERO 2026</code>, etc.
+      </p>
+      <div class="fila">
+        <label for="anioIngresos">Año:</label>
+        <input id="anioIngresos" class="campo campo-corto" type="text" inputmode="numeric" maxlength="4"
+               ng-model="anioIngresos" placeholder="2026">
+        <span class="pista" ng-if="!anioValido()">Escribe el año con 4 dígitos.</span>
+      </div>
+
+      <h3><span class="paso">4</span> Rellenar</h3>
+      <div class="fila">
+        <button class="btn btn-confirmar"
+                ng-click="rellenarExcelIngresos()"
+                ng-disabled="!archivosEmitidosIngresos.length || !archivoMaestroIngresos || !anioValido() || !clienteActual() || procesandoRellenoIngresos">
+          <span class="spinner" ng-if="procesandoRellenoIngresos"></span>{{ procesandoRellenoIngresos ? 'Rellenando...' : 'Rellenar y guardar' }}
+        </button>
+        <span class="pista" ng-if="!archivosEmitidosIngresos.length || !archivoMaestroIngresos">
+          Selecciona ambos archivos para continuar.
+        </span>
+        <span class="pista" ng-if="!clienteActual()">Selecciona un cliente en la tarjeta de arriba.</span>
+        <span class="ok" ng-if="clienteActual()">Se filtrará el régimen emisor {{ nombreRegimen(clienteActual().regimenCodigo) }}</span>
+      </div>
+
+      <p class="error" ng-if="mensajeErrorIngresos">{{ mensajeErrorIngresos }}</p>
+    </section>
+
+    <!-- Resumen -->
+    <section class="tarjeta" ng-if="resumenRellenoIngresos">
+      <h2>✔ Resultado</h2>
+      <div class="resultado-guardado">💾 Guardado en: {{ resumenRellenoIngresos.rutaGuardado }}</div>
+
+      <div ng-if="resumenRellenoIngresos.hojasActualizadas.length">
+        <h3>Pestañas actualizadas</h3>
+        <ul>
+          <li ng-repeat="h in resumenRellenoIngresos.hojasActualizadas">
+            {{ h.mes }} (hoja "{{ h.hoja }}"): {{ h.filas }} fila(s) — desde {{ h.archivo }}
+            <span class="pista" ng-if="h.filas === 0">0 filas: ningún Emitido VIGENTE con régimen emisor {{ h.regimenFiltrado }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <div ng-if="resumenRellenoIngresos.hojasRenombradas.length">
+        <h3>Pestañas renombradas</h3>
+        <ul class="lista-detalle">
+          <li ng-repeat="h in resumenRellenoIngresos.hojasRenombradas">{{ h.de }} → {{ h.a }}</li>
+        </ul>
+      </div>
+
+      <div ng-if="resumenRellenoIngresos.archivosNoReconocidos.length">
+        <h3 class="error">Archivos sin mes reconocible</h3>
+        <ul class="lista-detalle">
+          <li ng-repeat="a in resumenRellenoIngresos.archivosNoReconocidos" class="error">
+            {{ a }} — renombra el archivo para que empiece con el nombre del mes.
+          </li>
+        </ul>
+      </div>
+
+      <div ng-if="resumenRellenoIngresos.hojasNoEncontradas.length">
+        <h3 class="error">No se pudo actualizar</h3>
+        <ul class="lista-detalle">
+          <li ng-repeat="h in resumenRellenoIngresos.hojasNoEncontradas" class="error">
+            {{ h.archivo }} ({{ h.mes }}): {{ h.motivo }}
+          </li>
+        </ul>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/angular/angular.js"></script>
+  <script src="/angular-resource/angular-resource.js"></script>
+  <script src="/js/app.module.js"></script>
+  <script src="/js/factorys/cfdiFactory.js"></script>
+  <script src="/js/factorys/ingresosExcelFactory.js"></script>
+  <script src="/js/factorys/clientesFactory.js"></script>
+  <script src="/js/controllers/mainCtrl.js"></script>
+</body>
+</html>

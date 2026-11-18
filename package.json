@@ -1,0 +1,51 @@
+{
+  "name": "cfdi-organizer",
+  "version": "1.0.0",
+  "description": "Organizador de CFDIs (Ingresos, Egresos y Pagos) a partir de archivos Excel de Emitidos y Recibidos",
+  "main": "main.js",
+  "author": "",
+  "license": "ISC",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:win-portable": "electron-builder --win portable --publish never"
+  },
+  "dependencies": {
+    "angular": "^1.8.3",
+    "angular-resource": "^1.8.3",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "fast-xml-parser": "^4.4.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.cfdiorganizer.app",
+    "productName": "Organizador de CFDIs",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "server/**/*",
+      "public/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}
